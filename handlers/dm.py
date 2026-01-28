@@ -1,12 +1,10 @@
-from aiogram import Router, types
+from aiogram import types
 from aiogram.filters import CommandStart
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import constants.text_constants
 import keyboards.dm_keyboards
-
-
-dm_router = Router(name="dm_router")
+from routers import dm_router
 
 
 @dm_router.message(CommandStart())

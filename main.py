@@ -1,31 +1,23 @@
 import asyncio
 
-from bot import (
-    bot,
-    dp,
-    engine,
-    session_maker,
-)
+from bot import bot, dp, engine, session_maker
 import database.base
-import handlers.dm
-import middlewares.db_connection
+from handlers.dm import dm_router
+from handlers.bot_added_to_group import on_bot_added_to_group_router
+from middlewares.db_connection import DbSessionMiddleware
+from queues.workers import group_admins_worker
 
 
 async def start():
+
     async with engine.begin() as conn:
-        await conn.run_sync(
-            database.base.Base.metadata.create_all,
-        )
+        await conn.run_sync(database.base.Base.metadata.create_all)
 
-    dp.update.middleware(
-        middlewares.db_connection.DbSessionMiddleware(
-            session_pool=session_maker,
-        )
-    )
+    dp.update.middleware(DbSessionMiddleware(session_pool=session_maker))
 
-    dp.include_routers(
-        handlers.dm.dm_router,
-    )
+    dp.include_routers(dm_router, on_bot_added_to_group_router)
+
+    asyncio.create_task(group_admins_worker(bot))
 
     try:
         await dp.start_polling(bot)
@@ -33,4 +25,5 @@ async def start():
         await engine.dispose()
 
 
-asyncio.run(start())
+if __name__ == "__main__":
+    asyncio.run(start())

@@ -7,7 +7,6 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import dotenv
 
-
 dotenv.load_dotenv()
 
 
