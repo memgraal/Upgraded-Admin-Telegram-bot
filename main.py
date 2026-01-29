@@ -4,6 +4,7 @@ from bot import bot, dp, engine, session_maker
 import database.base
 from handlers.dm import dm_router
 from handlers.bot_added_to_group import on_bot_added_to_group_router
+from handlers.update_admins import update_users_rights
 from middlewares.db_connection import DbSessionMiddleware
 from queues.workers import group_admins_worker
 
@@ -15,7 +16,11 @@ async def start():
 
     dp.update.middleware(DbSessionMiddleware(session_pool=session_maker))
 
-    dp.include_routers(dm_router, on_bot_added_to_group_router)
+    dp.include_routers(
+        dm_router,
+        on_bot_added_to_group_router,
+        update_users_rights,
+    )
 
     asyncio.create_task(group_admins_worker(bot))
 
