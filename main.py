@@ -1,4 +1,8 @@
 import asyncio
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot import bot, dp, engine, session_maker
 import database.base
@@ -7,6 +11,12 @@ from handlers.bot_added_to_group import on_bot_added_to_group_router
 from handlers.update_admins import update_users_rights
 from middlewares.db_connection import DbSessionMiddleware
 from queues.workers import group_admins_worker
+from payments_schedule.job import check_daily_payments
+
+
+scheduler = AsyncIOScheduler(
+    timezone=ZoneInfo("Europe/Moscow")
+)
 
 
 async def start():
@@ -24,9 +34,29 @@ async def start():
 
     asyncio.create_task(group_admins_worker(bot))
 
+    # scheduler.add_job(
+    #     check_daily_payments(session_maker),
+    #     # trigger="cron",
+    #     # hour=9,
+    #     # minute=0,
+    #     trigger="interval",
+    #     minutes=1,
+    # )
+
+    scheduler.add_job(
+        check_daily_payments,      # ← БЕЗ скобок
+        trigger="interval",
+        minutes=1,
+        args=[session_maker],      # ← аргументы тут
+        next_run_time=datetime.now(),  # 👈 запуск сразу
+    )
+
+    scheduler.start()
+
     try:
         await dp.start_polling(bot)
     finally:
+        scheduler.shutdown(wait=False)
         await engine.dispose()
 
 

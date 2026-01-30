@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot import engine
 from queues.admin_queue import group_admins_queue
+from database.groups import GroupSettings
 from database.managers import GroupManager, UserManager, UserGroupManager
 from constants.group_constants import GroupUserRole
 import utils
@@ -11,6 +12,7 @@ Session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def group_admins_worker(bot):
+    # Первичное добавление админов с добавлением бота
     while True:
         chat_id = await group_admins_queue.get()
 
@@ -21,9 +23,25 @@ async def group_admins_worker(bot):
                 user_group_manager = UserGroupManager(session)
 
                 # 1. Группа
-                group, _ = await group_manager.get_or_create(
+                group, created = await group_manager.get_or_create(
                     chat_id=chat_id
                 )
+
+                if created:
+                    session.add(
+                        GroupSettings(
+                            group_id=group.id,
+                        )
+                    )
+
+                else:
+                    # страховка, если группа старая
+                    if group.settings is None:
+                        session.add(
+                            GroupSettings(
+                                group_id=group.id,
+                            )
+                        )
 
                 # 2. Админы чата
                 admins = await utils.get_chat_admins(chat_id)

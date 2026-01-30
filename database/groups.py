@@ -1,8 +1,10 @@
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
-    JSON,
+    String,
+    ForeignKey,
     func,
 )
 from sqlalchemy.orm import (
@@ -29,13 +31,6 @@ class Group(Base):
         nullable=False,
     )
 
-    # !JSON: {banwords: List[], welcome_message: str | "", ...}
-    settings: Mapped[dict] = mapped_column(
-        JSON,
-        nullable=False,
-        default=dict,
-    )
-
     subscription_type: Mapped[GroupType] = mapped_column(
         # !type: paid | free
         Enum(
@@ -56,6 +51,19 @@ class Group(Base):
         server_default=func.now()
     )
 
+    settings = relationship(
+        "GroupSettings",
+        back_populates="group",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+    banwords = relationship(
+        "Banwords",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
     users = relationship(
         "UserGroup",
         back_populates="group",
@@ -66,4 +74,60 @@ class Group(Base):
         "CaptchaLogs",
         back_populates="group",
         cascade="all, delete-orphan",
+    )
+
+
+class GroupSettings(Base):
+    __tablename__ = "group_settings"
+
+    id: Mapped[BigInteger] = mapped_column(
+        BigInteger,
+        primary_key=True,
+    )
+
+    group_id: Mapped[BigInteger] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+
+    captcha_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    photo_check_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    group = relationship(
+        "Group",
+        back_populates="settings",
+    )
+
+
+class Banwords(Base):
+    __tablename__ = "banwords"
+
+    id: Mapped[BigInteger] = mapped_column(
+        BigInteger,
+        primary_key=True,
+    )
+
+    group_id: Mapped[BigInteger] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    word: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    group = relationship(
+        "Group",
+        back_populates="banwords",
     )

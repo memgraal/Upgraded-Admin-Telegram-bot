@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Enum
+from sqlalchemy import ForeignKey, Enum, UniqueConstraint
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -11,6 +11,10 @@ from constants.group_constants import GroupUserRole
 
 class UserGroup(Base):
     __tablename__ = "user_groups"
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "group_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 

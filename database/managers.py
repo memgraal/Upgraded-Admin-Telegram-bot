@@ -1,6 +1,6 @@
 from sqlalchemy_manager.managers import AsyncManager
 from database.captcha_logs import CaptchaLogs
-from database.groups import Group
+from database.groups import Group, GroupSettings, Banwords
 from database.users import User
 from database.users_groups import UserGroup
 
@@ -18,4 +18,12 @@ class CaptchaLogsManager(AsyncManager[CaptchaLogs]):
 
 
 class UserGroupManager(AsyncManager[UserGroup]):
+    pass
+
+
+class GroupSettingsManager(AsyncManager[GroupSettings]):
+    pass
+
+
+class GroupBanwordsManager(AsyncManager[Banwords]):
     pass
