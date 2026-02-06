@@ -12,3 +12,9 @@ START_GEREETING_TEXT = """
 USER_GROUPS_TEXT = """
 Ваши группы:
 """
+
+STARS_PRICES = {
+    1: 250,
+    2: 500,
+    3: 750,
+}

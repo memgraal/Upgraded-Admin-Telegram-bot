@@ -1,6 +1,7 @@
 import os
 
 import aiogram
+import aiogram_fsm_sqlitestorage
 import dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
@@ -8,8 +9,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 dotenv.load_dotenv()
 
 
+storage = aiogram_fsm_sqlitestorage.SQLiteStorage("states.db")
 bot = aiogram.Bot(os.getenv("BOT_TOKEN"))
-dp = aiogram.Dispatcher()
+dp = aiogram.Dispatcher(storage=storage)
 
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")

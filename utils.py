@@ -31,7 +31,6 @@ async def get_group_name(*, session, group_id: int) -> str:
 
 async def check_group_access(
     session: AsyncSession,
-    user_id: int,
     group_id: int,
 ) -> bool:
     group = await session.get(Group, group_id)
@@ -73,45 +72,74 @@ async def validate_promo_code(
     session,
     promo: str,
     group_id: int,
-) -> bool:
-
-    promo = await PromocodeManager(session).get(
+) -> tuple[bool, str | None]:
+    promo_obj = await PromocodeManager(session).get(
         code=promo.strip().lower(),
     )
 
-    if not promo and not print.is_active:
-        return False
+    if not promo_obj:
+        return False, "❌ Промокод не найден"
 
-    return True
+    if promo_obj.group_id is not None:
+        return False, "❌ Этот промокод уже был использован"
+
+    if not promo_obj.is_active:
+        return False, "❌ Промокод неактивен"
+
+    return True, None
 
 
 async def activate_group_subscription(
     *,
-    session,
+    session: AsyncSession,
     group_id: int,
-    promo: str
-):
+    promo: str | None = None,
+    months: int = 1,
+) -> bool:
     group = await session.get(Group, group_id)
     if not group:
         return False
 
-    promo = await PromocodeManager(session).get(
-        code=promo.strip().lower(),
-    )
-    if not promo:
-        return False
+    now = datetime.now(timezone.utc)
+
+    # ========================
+    # 🎟 ПРОМОКОД
+    # ========================
+    if promo:
+        promo_obj = await PromocodeManager(session).get(
+            code=promo.strip().lower(),
+        )
+
+        if (
+            not promo_obj
+            or promo_obj.group_id is not None
+            or not promo_obj.is_active
+        ):
+            return False
+
+        await PromocodeManager(session).update(
+            promo_obj,
+            is_active=False,
+            group_id=group_id,
+            activated_at=now,
+        )
+
+    # ========================
+    # ⭐️ STARS / ОБЩАЯ ЛОГИКА
+    # ========================
+    paid_until = group.paid_until or now
+
+    # если подписка истекла — считаем от текущего времени
+    if paid_until < now:
+        paid_until = now
 
     await GroupManager(session).update(
         group,
         subscription_type=GroupType.PAID,
-        paid_until=datetime.now(timezone.utc) + relativedelta(months=1),
+        paid_until=paid_until + relativedelta(months=months),
     )
 
-    await PromocodeManager(session).update(
-        promo,
-        is_active=True,
-        group_id=group_id,
-    )
+    return True
 
 
 async def redraw_banwords_menu(

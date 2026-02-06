@@ -7,13 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import constants.text_constants
-from database.groups import Banwords
+from constants.group_constants import GroupType
+from database.groups import Banwords, Group
 from database.managers import (
     GroupSettingsManager,
-    GroupBanwordsManager
+    GroupBanwordsManager,
 )
 import keyboards.dm_keyboards
-from states import GroupFSM, BanwordsFSM
+from states import DMFSM
 from routers import dm_router
 from utils import (
     check_group_access,
@@ -28,29 +29,33 @@ from utils import (
 # START
 # =========================
 @dm_router.message(CommandStart())
-async def start(message: types.Message, bot: Bot, session: AsyncSession):
+async def start(
+    message: types.Message,
+    bot: Bot,
+    state: FSMContext,
+    session: AsyncSession,
+):
     await cmd_clear(message, bot)
 
-    # 1️⃣ Приветствие + кнопка "Подключить группу"
+    await state.clear()
+    await state.set_state(DMFSM.browsing_groups)
+
     await message.answer(
         constants.text_constants.START_GEREETING_TEXT,
         reply_markup=await keyboards.dm_keyboards.start_menu_keyboard(),
     )
 
-    # 2️⃣ Сообщение-заглушка
     loading_msg = await message.answer(
         "🔄 Загружаю ваши группы…",
         reply_markup=keyboards.dm_keyboards.loading_keyboard(),
     )
 
-    # 3️⃣ Получаем группы
     keyboard = await keyboards.dm_keyboards.get_paginated_kb(
         session=session,
         telegram_user_id=message.from_user.id,
         page=0,
     )
 
-    # 4️⃣ Заменяем заглушку списком групп
     await loading_msg.edit_text(
         constants.text_constants.USER_GROUPS_TEXT,
         reply_markup=keyboard,
@@ -87,7 +92,10 @@ async def cmd_clear(message: types.Message, bot: Bot):
 # =========================
 # PAGINATION
 # =========================
-@dm_router.callback_query(keyboards.dm_keyboards.PageCallback.filter())
+@dm_router.callback_query(
+    keyboards.dm_keyboards.PageCallback.filter(),
+    DMFSM.browsing_groups
+)
 async def paginate_user_groups(
     callback: CallbackQuery,
     callback_data: keyboards.dm_keyboards.PageCallback,
@@ -106,26 +114,26 @@ async def paginate_user_groups(
 # =========================
 # OPEN GROUP
 # =========================
-@dm_router.callback_query(keyboards.dm_keyboards.GroupData.filter())
+@dm_router.callback_query(
+    keyboards.dm_keyboards.GroupData.filter(),
+    DMFSM.browsing_groups,
+)
 async def open_group(
     callback: CallbackQuery,
     callback_data: keyboards.dm_keyboards.GroupData,
     state: FSMContext,
     session: AsyncSession,
 ):
+    await state.set_state(DMFSM.group_settings)
+
     group_id = callback_data.group_id
     await state.update_data(group_id=group_id)
 
-    has_access = await check_group_access(
-        session=session,
-        user_id=callback.from_user.id,
-        group_id=group_id,
-    )
+    has_access = await check_group_access(session=session, group_id=group_id)
 
     if not has_access:
         await callback.message.edit_text(
-            "🔒 Эта группа на платной подписке.\n\n"
-            "Введите промокод для получения доступа:",
+            "🔒 Эта группа на платной подписке.\n\nВыберите способ оплаты:",
             reply_markup=keyboards.dm_keyboards.payment_keyboard(),
         )
         await callback.answer()
@@ -138,11 +146,18 @@ async def open_group(
     )
 
 
-@dm_router.callback_query(F.data == "promo:back")
-async def promo_back(
+# =========================
+# BACK TO GROUPS
+# =========================
+@dm_router.callback_query(F.data.in_(("promo:back", "groups:back")))
+async def back_to_groups(
     callback: CallbackQuery,
+    state: FSMContext,
     session: AsyncSession,
 ):
+    await state.clear()
+    await state.set_state(DMFSM.browsing_groups)
+
     keyboard = await keyboards.dm_keyboards.get_paginated_kb(
         session=session,
         telegram_user_id=callback.from_user.id,
@@ -153,44 +168,37 @@ async def promo_back(
         constants.text_constants.USER_GROUPS_TEXT,
         reply_markup=keyboard,
     )
-
-    await callback.answer()
-
-
-@dm_router.callback_query(F.data == "groups:back")
-async def back_to_groups(
-    callback: CallbackQuery,
-    session: AsyncSession,
-):
-    keyboard = await keyboards.dm_keyboards.get_paginated_kb(
-        session=session,
-        telegram_user_id=callback.from_user.id,
-        page=0,  # всегда первая страница
-    )
-
-    await callback.message.edit_text(
-        constants.text_constants.USER_GROUPS_TEXT,
-        reply_markup=keyboard,
-    )
-
     await callback.answer()
 
 
 # =========================
 # PROMO FLOW
 # =========================
-@dm_router.callback_query(F.data == "promo:start")
+@dm_router.callback_query(F.data == "promo:start", DMFSM.group_settings)
 async def promo_start(
     callback: CallbackQuery,
     state: FSMContext,
+    session: AsyncSession,
+    bot: Bot,
 ):
-    await state.set_state(GroupFSM.waiting_for_promo)
+    data = await state.get_data()
+    group_id = data.get("group_id")
 
+    if not group_id:
+        await callback.answer()
+        return
+
+    group = await session.get(Group, group_id)
+    if group and group.subscription_type == GroupType.PAID:
+        await callback.answer("Подписка уже активна")
+        return
+
+    await state.set_state(DMFSM.waiting_for_promo)
     await callback.message.answer("✍️ Введите промокод:")
     await callback.answer()
 
 
-@dm_router.message(GroupFSM.waiting_for_promo)
+@dm_router.message(DMFSM.waiting_for_promo)
 async def promo_entered(
     message: types.Message,
     state: FSMContext,
@@ -201,41 +209,137 @@ async def promo_entered(
     group_id = data.get("group_id")
 
     if not group_id:
-        await message.answer("❌ Ошибка состояния. Попробуйте заново.")
+        await message.answer("❌ Ошибка состояния")
         await state.clear()
+        await state.set_state(DMFSM.browsing_groups)
         return
 
-    is_valid = await validate_promo_code(
+    ok, error = await validate_promo_code(
         session=session,
         promo=promo,
         group_id=group_id,
     )
-
-    if not is_valid:
-        await message.answer("❌ Неверный промокод\nПопробуйте ещё раз:")
+    if not ok:
+        await message.answer(error)
         return
 
-    await activate_group_subscription(
+    activated = await activate_group_subscription(
         session=session,
         group_id=group_id,
         promo=promo,
     )
+    if not activated:
+        await message.answer("❌ Промокод уже использован")
+        return
 
     await message.answer("✅ Доступ получен")
-
     await open_settings_menu(
         message=message,
         session=session,
         group_id=group_id,
     )
-
-    await state.clear()
+    await state.set_state(DMFSM.group_settings)
 
 
 # =========================
-# SETTINGS MENU
+# STARS FLOW
 # =========================
-@dm_router.callback_query(F.data.startswith("toggle:"))
+@dm_router.callback_query(F.data == "promo:stars", DMFSM.group_settings)
+async def stars_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+):
+    data = await state.get_data()
+    group_id = data.get("group_id")
+
+    if not group_id:
+        await callback.answer()
+        return
+
+    group = await session.get(Group, group_id)
+    if group and group.subscription_type == GroupType.PAID:
+        await callback.answer("ℹ️ Подписка уже активна")
+        return
+
+    await state.set_state(DMFSM.waiting_for_stars)
+
+    await callback.message.edit_text(
+        "⭐️ Выберите срок подписки:",
+        reply_markup=keyboards.dm_keyboards.stars_duration_keyboard(group_id),
+    )
+    await callback.answer()
+
+
+@dm_router.callback_query(
+    F.data.startswith("stars:"),
+    DMFSM.waiting_for_stars,
+)
+async def stars_invoice(
+    callback: CallbackQuery,
+    bot: Bot,
+    state: FSMContext,
+    session: AsyncSession,
+):
+    _, months, group_id = callback.data.split(":")
+    group_id = int(group_id)
+
+    group = await session.get(Group, group_id)
+    if group and group.subscription_type == GroupType.PAID:
+        await callback.answer("ℹ️ Подписка уже активна")
+        await state.set_state(DMFSM.group_settings)
+        return
+
+    price = constants.text_constants.STARS_PRICES[int(months)]
+
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title="Подписка на группу",
+        description=f"Доступ на {months} мес.",
+        payload=f"group:{group_id}:{months}",
+        currency="XTR",
+        prices=[types.LabeledPrice(label="Подписка", amount=price)],
+    )
+    await callback.answer()
+
+
+@dm_router.pre_checkout_query()
+async def pre_checkout(pre_checkout_query: types.PreCheckoutQuery):
+    await pre_checkout_query.answer(ok=True)
+
+
+@dm_router.message(F.successful_payment)
+async def successful_stars_payment(
+    message: types.Message,
+    session: AsyncSession,
+    state: FSMContext,
+):
+    _, group_id, months = message.successful_payment.invoice_payload.split(":")
+    group_id = int(group_id)
+    months = int(months)
+
+    activated = await activate_group_subscription(
+        session=session,
+        group_id=group_id,
+        months=months,
+    )
+    if not activated:
+        await message.answer("❌ Не удалось активировать подписку")
+        return
+
+    await message.answer(f"✅ Подписка активирована на {months} мес.")
+    await open_settings_menu(
+        message=message,
+        session=session,
+        group_id=group_id,
+    )
+    await state.set_state(DMFSM.group_settings)
+
+
+# =========================
+# SETTINGS
+# =========================
+@dm_router.callback_query(F.data.startswith("toggle:"), DMFSM.group_settings)
 async def toggle_group_setting(
     callback: CallbackQuery,
     session: AsyncSession,
@@ -247,16 +351,13 @@ async def toggle_group_setting(
 
     if field == "captcha":
         settings.captcha_enabled = not settings.captcha_enabled
-
     elif field == "photo":
         settings.photo_check_enabled = not settings.photo_check_enabled
-
     else:
         await callback.answer("❌ Неизвестная настройка")
         return
 
     await session.commit()
-
     await open_settings_menu(
         callback=callback,
         session=session,
@@ -265,19 +366,19 @@ async def toggle_group_setting(
 
 
 # =========================
-# Bandwords MENU
+# BANWORDS
 # =========================
 @dm_router.callback_query(
-    F.data.startswith("banwords:")
-    & ~F.data.contains("add")
-    & ~F.data.contains("del")
-    & ~F.data.contains("back")
+    F.data.startswith("banwords:"),
+    DMFSM.group_settings,
 )
 async def open_banwords(
     callback: CallbackQuery,
     state: FSMContext,
     session: AsyncSession,
 ):
+    await state.set_state(DMFSM.banwords_menu)
+
     _, group_id = callback.data.split(":")
     group_id = int(group_id)
 
@@ -293,30 +394,43 @@ async def open_banwords(
             session,
             group_id,
         ),
-        parse_mode='HTML',
+        parse_mode="HTML",
     )
 
     await state.update_data(
+        group_id=group_id,
         banwords_chat_id=callback.message.chat.id,
         banwords_message_id=callback.message.message_id,
-        group_id=group_id,
     )
-
     await callback.answer()
 
 
-@dm_router.callback_query(F.data.startswith("banwords:back:"))
-async def back_from_banwords(
+@dm_router.callback_query(
+    F.data.startswith("banwords:add:"),
+    DMFSM.banwords_menu,
+)
+async def add_banword_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(DMFSM.banwords_add)
+    await callback.message.answer("✍️ Введите слово для бана:")
+    await callback.answer()
+
+
+@dm_router.callback_query(
+    F.data.startswith("banwords:back:"),
+    DMFSM.banwords_menu,
+)
+async def banwords_back(
     callback: CallbackQuery,
     state: FSMContext,
     session: AsyncSession,
 ):
+    # вытаскиваем group_id из callback
     group_id = int(callback.data.split(":")[2])
 
-    # чистим состояние бан-слов
-    await state.clear()
+    # возвращаем FSM в настройки группы
+    await state.set_state(DMFSM.group_settings)
 
-    # возвращаемся в настройки группы
+    # возвращаем меню настроек
     await open_settings_menu(
         callback=callback,
         session=session,
@@ -326,27 +440,7 @@ async def back_from_banwords(
     await callback.answer()
 
 
-# Добавление банворда
-@dm_router.callback_query(F.data.startswith("banwords:add:"))
-async def add_banword_start(
-    callback: CallbackQuery,
-    state: FSMContext,
-):
-    group_id = int(callback.data.split(":")[2])
-
-    await state.update_data(
-        group_id=group_id,
-        banwords_chat_id=callback.message.chat.id,
-        banwords_message_id=callback.message.message_id,
-    )
-
-    await state.set_state(BanwordsFSM.waiting_for_add)
-
-    await callback.message.answer("✍️ Введите слово для бана:")
-    await callback.answer()
-
-
-@dm_router.message(BanwordsFSM.waiting_for_add)
+@dm_router.message(DMFSM.banwords_add)
 async def add_banword_finish(
     message: types.Message,
     state: FSMContext,
@@ -357,14 +451,11 @@ async def add_banword_finish(
 
     try:
         await GroupBanwordsManager(session).create(
-            Banwords(
-                group_id=data["group_id"],
-                word=word,
-            )
+            Banwords(group_id=data["group_id"], word=word)
         )
     except IntegrityError:
         await session.rollback()
-        await message.answer("⚠️ Это слово уже есть в списке")
+        await message.answer("⚠️ Это слово уже есть")
         return
 
     await redraw_banwords_menu(
@@ -374,31 +465,20 @@ async def add_banword_finish(
         message_id=data["banwords_message_id"],
         group_id=data["group_id"],
     )
+    await state.set_state(DMFSM.banwords_menu)
 
-    await state.clear()
 
-
-# Удаление банворда
-@dm_router.callback_query(F.data.startswith("banwords:del:"))
-async def delete_banword_start(
-    callback: CallbackQuery,
-    state: FSMContext,
-):
-    group_id = int(callback.data.split(":")[2])
-
-    await state.update_data(
-        group_id=group_id,
-        banwords_chat_id=callback.message.chat.id,
-        banwords_message_id=callback.message.message_id,
-    )
-
-    await state.set_state(BanwordsFSM.waiting_for_delete)
-
+@dm_router.callback_query(
+    F.data.startswith("banwords:del:"),
+    DMFSM.banwords_menu,
+)
+async def delete_banword_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(DMFSM.banwords_delete)
     await callback.message.answer("✍️ Введите слово для удаления:")
     await callback.answer()
 
 
-@dm_router.message(BanwordsFSM.waiting_for_delete)
+@dm_router.message(DMFSM.banwords_delete)
 async def delete_banword_finish(
     message: types.Message,
     state: FSMContext,
@@ -408,16 +488,13 @@ async def delete_banword_finish(
     word = message.text.strip().lower()
 
     pagination = await GroupBanwordsManager(session).search(
-        group_id=data["group_id"],
-        word=word,
+        group_id=data["group_id"], word=word
     )
-    items = pagination.items
-
-    if not items:
-        await message.answer("❌ Такое слово не найдено")
+    if not pagination.items:
+        await message.answer("❌ Слово не найдено")
         return
 
-    for item in items:
+    for item in pagination.items:
         await GroupBanwordsManager(session).delete(item)
 
     await redraw_banwords_menu(
@@ -427,5 +504,4 @@ async def delete_banword_finish(
         message_id=data["banwords_message_id"],
         group_id=data["group_id"],
     )
-
-    await state.clear()
+    await state.set_state(DMFSM.banwords_menu)

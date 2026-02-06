@@ -114,6 +114,36 @@ def payment_keyboard():
     )
 
     builder.button(
+        text="💳 Оплата звездами⭐️",
+        callback_data="promo:stars",
+    )
+
+    builder.button(
+        text="⬅️ Назад",
+        callback_data="promo:back",
+    )
+
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def stars_duration_keyboard(group_id: int):
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="⭐️ 1 месяц — 1",
+        callback_data=f"stars:1:{group_id}",
+    )
+    builder.button(
+        text="⭐️⭐️ 2 месяца — 2⭐️",
+        callback_data=f"stars:2:{group_id}",
+    )
+    builder.button(
+        text="⭐️⭐️⭐️ 3 месяца — 3⭐️",
+        callback_data=f"stars:3:{group_id}",
+    )
+
+    builder.button(
         text="⬅️ Назад",
         callback_data="promo:back",
     )
