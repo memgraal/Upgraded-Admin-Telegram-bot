@@ -8,5 +8,4 @@ class GroupType(enum.Enum):
 
 class GroupUserRole(enum.Enum):
     ADMIN = "admin"
-    CREATOR = "creator"
     MEMBER = "member"

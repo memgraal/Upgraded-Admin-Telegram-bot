@@ -5,6 +5,7 @@ from sqlalchemy import (
     Enum,
     String,
     ForeignKey,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import (
@@ -76,6 +77,12 @@ class Group(Base):
         cascade="all, delete-orphan",
     )
 
+    promocodes = relationship(
+        "Promocode",
+        back_populates="group",
+        cascade="save-update",
+    )
+
 
 class GroupSettings(Base):
     __tablename__ = "group_settings"
@@ -111,6 +118,10 @@ class GroupSettings(Base):
 
 class Banwords(Base):
     __tablename__ = "banwords"
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "word", name="uq_group_word"),
+    )
 
     id: Mapped[BigInteger] = mapped_column(
         BigInteger,

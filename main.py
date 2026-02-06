@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -34,21 +33,12 @@ async def start():
 
     asyncio.create_task(group_admins_worker(bot))
 
-    # scheduler.add_job(
-    #     check_daily_payments(session_maker),
-    #     # trigger="cron",
-    #     # hour=9,
-    #     # minute=0,
-    #     trigger="interval",
-    #     minutes=1,
-    # )
-
     scheduler.add_job(
-        check_daily_payments,      # ← БЕЗ скобок
-        trigger="interval",
-        minutes=1,
-        args=[session_maker],      # ← аргументы тут
-        next_run_time=datetime.now(),  # 👈 запуск сразу
+        check_daily_payments,
+        trigger="cron",
+        hour=9,
+        minute=0,
+        args=[session_maker],
     )
 
     scheduler.start()
