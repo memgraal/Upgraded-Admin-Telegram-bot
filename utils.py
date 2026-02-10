@@ -1,7 +1,12 @@
+import asyncio
 from datetime import datetime, timezone
+import random
+import string
 
 from aiogram import Bot
+from aiogram.types import PhotoSize
 from aiogram.types import CallbackQuery, Message
+from aiogram.filters.callback_data import CallbackData
 from sqlalchemy.ext.asyncio import AsyncSession
 from dateutil.relativedelta import relativedelta
 
@@ -11,8 +16,14 @@ from database.managers import (
     GroupBanwordsManager,
     PromocodeManager,
 )
+from bot import ocr_reader
 from database.groups import GroupType, Group
 import keyboards.dm_keyboards
+
+
+class CaptchaCallbackData(CallbackData, prefix="captcha"):
+    chat_id: int
+    telegram_user_id: int
 
 
 async def get_chat_admins(chat_id):
@@ -166,3 +177,48 @@ async def redraw_banwords_menu(
         ),
         parse_mode='HTML'
     )
+
+
+async def safe_delete(message: Message):
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+async def download_photo_bytes(bot: Bot, photo: PhotoSize) -> bytes:
+    file = await bot.get_file(photo.file_id)
+    file_bytes = await bot.download_file(file.file_path)
+    return file_bytes.read()
+
+
+def _ocr_image_sync(image_bytes: bytes) -> str:
+    import numpy as np
+    import cv2
+
+    image = np.frombuffer(image_bytes, np.uint8)
+    image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+
+    result = ocr_reader.readtext(image, detail=0)
+    return "\n".join(result)
+
+
+async def extract_text_from_photo(photo: PhotoSize, bot: Bot) -> str | None:
+    image_bytes = await download_photo_bytes(bot, photo)
+
+    loop = asyncio.get_running_loop()
+    text = await loop.run_in_executor(
+        None,
+        _ocr_image_sync,
+        image_bytes,
+    )
+
+    return text.strip() if text else None
+
+
+def generate_promocode(length: int = 12, chunks: int = 3, sep: str = "-"):
+    alphabet = string.ascii_uppercase + string.digits
+    code = "".join(random.choice(alphabet) for _ in range(length))
+    if chunks:
+        return sep.join([code[i:i+4] for i in range(0, length, 4)])
+    return code

@@ -16,6 +16,7 @@ from database.managers import (
     GroupSettingsManager,
 )
 from utils import get_group_name
+from bot import admin_user_id
 
 
 dotenv.load_dotenv()
@@ -46,13 +47,15 @@ async def get_paginated_kb(
     session,
     telegram_user_id: int,
     page: int = 0,
-):
+) -> InlineKeyboardMarkup | None:
     builder = InlineKeyboardBuilder()
 
     user_manager = UserManager(session)
     user_group_manager = UserGroupManager(session)
 
     user = await user_manager.get(telegram_user_id=telegram_user_id)
+    if not user:
+        return None
 
     pagination = await user_group_manager.search(
         user_id=user.id,
@@ -60,9 +63,10 @@ async def get_paginated_kb(
         page=page + 1,
     )
 
-    groups = pagination.items
+    if pagination.total == 0:
+        return None
 
-    for group in groups:
+    for group in pagination.items:
         builder.row(
             InlineKeyboardButton(
                 text=await get_group_name(
@@ -88,6 +92,15 @@ async def get_paginated_kb(
             InlineKeyboardButton(
                 text="➡️",
                 callback_data=PageCallback(page=page + 1).pack(),
+            )
+        )
+
+    # ✅ Добавляем кнопку "Выдать промокод" только для конкретного пользователя
+    if telegram_user_id == admin_user_id:
+        builder.row(
+            InlineKeyboardButton(
+                text="🎁 Выдать промокод",
+                callback_data="give_promo",  # придумай свой callback
             )
         )
 

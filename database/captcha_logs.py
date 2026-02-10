@@ -2,10 +2,8 @@ from sqlalchemy import (
     Index,
     Integer,
     ForeignKey,
-    DateTime,
     Enum,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.orm import (
     Mapped,
@@ -42,17 +40,6 @@ class CaptchaLogs(Base):
         ),
         nullable=False,
         default=CaptchaStatus.PENDING,
-    )
-
-    sent_at: Mapped[DateTime] = mapped_column(
-        DateTime,
-        server_default=func.now(),
-        nullable=False,
-    )
-
-    solved_at: Mapped[DateTime | None] = mapped_column(
-        DateTime,
-        nullable=True,
     )
 
     # 🔒 1 пользователь — 1 капча в 1 группе

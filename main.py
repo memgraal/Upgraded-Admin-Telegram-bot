@@ -8,6 +8,7 @@ import database.base
 from handlers.dm import dm_router
 from handlers.bot_added_to_group import on_bot_added_to_group_router
 from handlers.update_admins import update_users_rights
+from handlers.incoming_messages import group_messages
 from middlewares.db_connection import DbSessionMiddleware
 from queues.workers import group_admins_worker
 from payments_schedule.job import check_daily_payments
@@ -27,11 +28,14 @@ async def start():
 
     dp.include_routers(
         dm_router,
+        group_messages,
         on_bot_added_to_group_router,
         update_users_rights,
     )
 
-    asyncio.create_task(group_admins_worker(bot))
+    asyncio.create_task(
+        group_admins_worker(bot),
+    )
 
     scheduler.add_job(
         check_daily_payments,

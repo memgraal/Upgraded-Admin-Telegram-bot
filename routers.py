@@ -19,3 +19,9 @@ update_users_rights = Router(name="update_users_rights")
 update_users_rights.message.filter(
     ChatTypeFilter(("group", "supergroup"))
 )
+
+
+group_messages = Router(name="group_message")
+group_messages.message.filter(
+    ChatTypeFilter(("group", "supergroup"))
+)

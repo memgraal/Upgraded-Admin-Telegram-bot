@@ -9,11 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import constants.text_constants
 from constants.group_constants import GroupType
 from database.groups import Banwords, Group
+from database.promocodes import Promocode
 from database.managers import (
     GroupSettingsManager,
     GroupBanwordsManager,
 )
 import keyboards.dm_keyboards
+from bot import admin_user_id
 from states import DMFSM
 from routers import dm_router
 from utils import (
@@ -22,6 +24,7 @@ from utils import (
     validate_promo_code,
     activate_group_subscription,
     redraw_banwords_menu,
+    generate_promocode,
 )
 
 
@@ -55,6 +58,10 @@ async def start(
         telegram_user_id=message.from_user.id,
         page=0,
     )
+
+    if not keyboard:
+        await loading_msg.edit_text("📭 Пока у тебя нет групп")
+        return
 
     await loading_msg.edit_text(
         constants.text_constants.USER_GROUPS_TEXT,
@@ -377,6 +384,7 @@ async def open_banwords(
     state: FSMContext,
     session: AsyncSession,
 ):
+    await callback.answer()
     await state.set_state(DMFSM.banwords_menu)
 
     _, group_id = callback.data.split(":")
@@ -505,3 +513,47 @@ async def delete_banword_finish(
         group_id=data["group_id"],
     )
     await state.set_state(DMFSM.banwords_menu)
+
+
+@dm_router.callback_query(lambda c: c.data == "give_promo")
+async def give_promocode_handler(
+    callback: CallbackQuery,
+    session: AsyncSession,
+):
+    await callback.answer()
+
+    if callback.from_user.id != admin_user_id:
+        await callback.message.edit_text("❌ У вас нет доступа к этой кнопке.")
+        return
+
+    promo_code = None
+
+    for _ in range(10):
+        code = generate_promocode()
+
+        promo = Promocode(
+            code=code,
+            is_active=True,
+            group_id=None,
+        )
+
+        session.add(promo)
+
+        try:
+            await session.commit()
+            promo_code = code
+            break
+        except IntegrityError:
+            await session.rollback()
+            continue
+
+    if promo_code is None:
+        await callback.message.answer(
+            "❌ Не удалось сгенерировать уникальный промокод. Попробуйте снова."
+        )
+        return
+
+    await callback.message.answer(
+        f"🎉 Промокод создан:\n\n`{promo_code}`",
+        parse_mode="Markdown"
+    )
