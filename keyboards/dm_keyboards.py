@@ -67,12 +67,16 @@ async def get_paginated_kb(
         return None
 
     for group in pagination.items:
+        text = await get_group_name(
+            session=session,
+            group_id=group.group_id,
+        )
+        if text == "❌ Не удалось получить информацию о группе":
+            continue
+
         builder.row(
             InlineKeyboardButton(
-                text=await get_group_name(
-                    session=session,
-                    group_id=group.group_id,
-                ),
+                text=text,
                 callback_data=GroupData(group_id=group.group_id).pack(),
             )
         )
