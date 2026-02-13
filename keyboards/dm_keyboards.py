@@ -99,12 +99,11 @@ async def get_paginated_kb(
             )
         )
 
-    # ✅ Добавляем кнопку "Выдать промокод" только для конкретного пользователя
-    if telegram_user_id == admin_user_id:
+    if str(telegram_user_id) == str(admin_user_id):
         builder.row(
             InlineKeyboardButton(
                 text="🎁 Выдать промокод",
-                callback_data="give_promo",  # придумай свой callback
+                callback_data="give_promo",
             )
         )
 
@@ -214,7 +213,7 @@ async def banwords_keyboard(session, group_id: int):
         callback_data=f"banwords:add:{group_id}",
     )
 
-    if words:  # ✅ теперь это реальный список
+    if words:
         builder.button(
             text="➖ Удалить слово",
             callback_data=f"banwords:del:{group_id}",

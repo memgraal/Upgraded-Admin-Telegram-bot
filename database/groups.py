@@ -21,19 +21,19 @@ from constants.group_constants import GroupType
 class Group(Base):
     __tablename__ = "groups"
 
-    id: Mapped[BigInteger] = mapped_column(
+    id: Mapped[int] = mapped_column(
         BigInteger,
         primary_key=True,
     )
 
-    chat_id: Mapped[BigInteger] = mapped_column(
+    chat_id: Mapped[int] = mapped_column(
         BigInteger,
         unique=True,
         nullable=False,
+        index=True,
     )
 
     subscription_type: Mapped[GroupType] = mapped_column(
-        # !type: paid | free
         Enum(
             GroupType,
             name="group_subscription_type_enum",
@@ -49,35 +49,41 @@ class Group(Base):
 
     created_at: Mapped[DateTime] = mapped_column(
         DateTime,
-        server_default=func.now()
+        server_default=func.now(),
+        nullable=False,
     )
 
-    settings = relationship(
+    # 🔥 ВАЖНО — 1 к 1
+    settings: Mapped["GroupSettings"] = relationship(
         "GroupSettings",
         back_populates="group",
         uselist=False,
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
-    banwords = relationship(
+    banwords: Mapped[list["Banwords"]] = relationship(
         "Banwords",
         back_populates="group",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
-    users = relationship(
+    users: Mapped[list["UserGroup"]] = relationship(
         "UserGroup",
         back_populates="group",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
-    captcha_logs = relationship(
+    captcha_logs: Mapped[list["CaptchaLogs"]] = relationship(
         "CaptchaLogs",
         back_populates="group",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
-    promocodes = relationship(
+    promocodes: Mapped[list["Promocode"]] = relationship(
         "Promocode",
         back_populates="group",
         cascade="save-update",
@@ -87,15 +93,19 @@ class Group(Base):
 class GroupSettings(Base):
     __tablename__ = "group_settings"
 
-    id: Mapped[BigInteger] = mapped_column(
+    __table_args__ = (
+        UniqueConstraint("group_id", name="uq_group_settings_group"),
+    )
+
+    id: Mapped[int] = mapped_column(
         BigInteger,
         primary_key=True,
     )
 
-    group_id: Mapped[BigInteger] = mapped_column(
+    group_id: Mapped[int] = mapped_column(
         ForeignKey("groups.id", ondelete="CASCADE"),
-        unique=True,
         nullable=False,
+        index=True,
     )
 
     captcha_enabled: Mapped[bool] = mapped_column(
@@ -110,7 +120,7 @@ class GroupSettings(Base):
         nullable=False,
     )
 
-    group = relationship(
+    group: Mapped["Group"] = relationship(
         "Group",
         back_populates="settings",
     )
@@ -123,14 +133,15 @@ class Banwords(Base):
         UniqueConstraint("group_id", "word", name="uq_group_word"),
     )
 
-    id: Mapped[BigInteger] = mapped_column(
+    id: Mapped[int] = mapped_column(
         BigInteger,
         primary_key=True,
     )
 
-    group_id: Mapped[BigInteger] = mapped_column(
+    group_id: Mapped[int] = mapped_column(
         ForeignKey("groups.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
 
     word: Mapped[str] = mapped_column(
@@ -138,7 +149,7 @@ class Banwords(Base):
         nullable=False,
     )
 
-    group = relationship(
+    group: Mapped["Group"] = relationship(
         "Group",
         back_populates="banwords",
     )

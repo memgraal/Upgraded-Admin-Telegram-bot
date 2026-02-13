@@ -178,13 +178,6 @@ async def redraw_banwords_menu(
     )
 
 
-async def safe_delete(message: Message):
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-
 def generate_promocode(length: int = 12, chunks: int = 3, sep: str = "-"):
     alphabet = string.ascii_uppercase + string.digits
     code = "".join(random.choice(alphabet) for _ in range(length))

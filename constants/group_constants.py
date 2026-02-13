@@ -9,3 +9,4 @@ class GroupType(enum.Enum):
 class GroupUserRole(enum.Enum):
     ADMIN = "admin"
     MEMBER = "member"
+    OWNER = "owner"
