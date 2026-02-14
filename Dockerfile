@@ -1,4 +1,5 @@
-FROM python:3.13.7-slim
+FROM python:3.12.3-slim
+
 
 WORKDIR /app
 
@@ -25,7 +26,6 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     libssl-dev \
     gfortran \
-    libatlas-base-dev \
     && rm -rf /var/lib/apt/lists/*
 
 

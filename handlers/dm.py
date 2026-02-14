@@ -522,7 +522,7 @@ async def give_promocode_handler(
 ):
     await callback.answer()
 
-    if callback.from_user.id != admin_user_id:
+    if str(callback.from_user.id) != admin_user_id:
         await callback.message.edit_text("❌ У вас нет доступа к этой кнопке.")
         return
 

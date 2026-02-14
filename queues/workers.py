@@ -1,6 +1,5 @@
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from bot import engine
 from queues.admin_queue import group_admins_queue
@@ -18,26 +17,27 @@ async def group_admins_worker(bot):
     while True:
         chat_id = await group_admins_queue.get()
 
-        async with Session() as session:
-            try:
+        try:
+            async with Session() as session:
+
                 group_manager = GroupManager(session)
                 user_manager = UserManager(session)
 
-                # 1️⃣ Получаем или создаём группу
                 group, created = await group_manager.get_or_create(
                     chat_id=chat_id
                 )
 
-                # 2️⃣ Если группа новая — создаём настройки
                 if created:
                     await GroupSettingsManager(session).create(
-                        GroupSettings(
-                            group_id=group.id,
-                        )
+                        GroupSettings(group_id=group.id)
                     )
 
-                # 3️⃣ Получаем актуальных админов Telegram
-                admins = await utils.get_chat_admins(chat_id)
+                try:
+                    admins = await utils.get_chat_admins(chat_id)
+                except Exception as e:
+                    print(f"Не удалось получить админов {chat_id}: {e}")
+                    await session.commit()
+                    continue
 
                 db_admin_ids = set()
 
@@ -47,18 +47,16 @@ async def group_admins_worker(bot):
                     if tg_user.is_bot:
                         continue
 
-                    # 4️⃣ Создаём или получаем пользователя с username
                     user, created_user = await user_manager.get_or_create(
                         telegram_user_id=tg_user.id,
                         username=tg_user.username,
                     )
 
-                    if not created_user and user.username != tg_user.username:
+                    if tg_user.username and user.username != tg_user.username:
                         user.username = tg_user.username
 
                     db_admin_ids.add(user.id)
 
-                # 5️⃣ Получаем ВСЕ связи user_group для этой группы
                 result = await session.execute(
                     select(UserGroup).where(
                         UserGroup.group_id == group.id
@@ -67,11 +65,9 @@ async def group_admins_worker(bot):
                 existing_relations = result.scalars().all()
 
                 existing_by_user = {
-                    rel.user_id: rel
-                    for rel in existing_relations
+                    rel.user_id: rel for rel in existing_relations
                 }
 
-                # 6️⃣ Обновляем / создаём ADMIN
                 for user_id in db_admin_ids:
                     if user_id in existing_by_user:
                         rel = existing_by_user[user_id]
@@ -86,7 +82,6 @@ async def group_admins_worker(bot):
                             )
                         )
 
-                # 7️⃣ Понижаем тех, кто больше не админ
                 for rel in existing_relations:
                     if (
                         rel.user_id not in db_admin_ids
@@ -96,12 +91,8 @@ async def group_admins_worker(bot):
 
                 await session.commit()
 
-            except IntegrityError:
-                await session.rollback()
+        except Exception as e:
+            print("Worker error:", e)
 
-            except Exception:
-                await session.rollback()
-                raise
-
-            finally:
-                group_admins_queue.task_done()
+        finally:
+            group_admins_queue.task_done()

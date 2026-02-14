@@ -3,7 +3,6 @@ import os
 import aiogram
 import aiogram_fsm_sqlitestorage
 import dotenv
-import easyocr
 import cv2
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
@@ -22,8 +21,6 @@ DB_NAME = os.getenv("DB_NAME")
 admin_user_id = os.getenv("BOT_ADMIN_ID")
 _db_url = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
 # OCR reader (инициализируется один раз)
-reader = easyocr.Reader(["ru", "en"], gpu=False)
-
 # QR detector (один раз)
 qr_detector = cv2.QRCodeDetector()
 engine = create_async_engine(
