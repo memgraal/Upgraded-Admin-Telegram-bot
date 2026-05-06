@@ -1,10 +1,14 @@
 from sqlalchemy_manager.managers import AsyncManager
+
 from database.captcha_logs import CaptchaLogs
 from database.groups import Group, GroupSettings, Banwords
 from database.users import User
 from database.users_groups import UserGroup
-from database.paginators import UserGroupPaginator
 from database.promocodes import Promocode
+from database.paginators import (
+    UserGroupPaginator,
+    BanwordsPaginator,
+)
 
 
 class UserManager(AsyncManager[User]):
@@ -21,7 +25,6 @@ class CaptchaLogsManager(AsyncManager[CaptchaLogs]):
 
 class UserGroupManager(AsyncManager[UserGroup]):
     paginator_class = UserGroupPaginator
-    pass
 
 
 class GroupSettingsManager(AsyncManager[GroupSettings]):
@@ -29,7 +32,7 @@ class GroupSettingsManager(AsyncManager[GroupSettings]):
 
 
 class GroupBanwordsManager(AsyncManager[Banwords]):
-    pass
+    paginator_class = BanwordsPaginator
 
 
 class PromocodeManager(AsyncManager[Promocode]):
