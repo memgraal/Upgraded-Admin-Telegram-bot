@@ -376,7 +376,7 @@ async def toggle_group_setting(
 # BANWORDS
 # =========================
 @dm_router.callback_query(
-    F.data.startswith("banwords:"),
+    F.data.regexp(r"^banwords:\d+$"),
     DMFSM.group_settings,
 )
 async def open_banwords(
@@ -461,10 +461,11 @@ async def add_banword_finish(
         await GroupBanwordsManager(session).create(
             Banwords(group_id=data["group_id"], word=word)
         )
-    except IntegrityError:
+    except IntegrityError as e:
         await session.rollback()
         await message.answer("⚠️ Это слово уже есть")
-        return
+        print(e.orig)
+        await message.answer(f"⚠️ {e.orig}")
 
     await redraw_banwords_menu(
         bot=message.bot,
