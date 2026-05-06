@@ -1,36 +1,77 @@
 import asyncio
+from dataclasses import dataclass
 
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters.callback_data import CallbackData
 from sqlalchemy.ext.asyncio import AsyncSession
-from database.captcha_logs import CaptchaLogs
-from database.managers import CaptchaLogsManager
-from aiogram.types import CallbackQuery
-from database.captcha_logs import CaptchaStatus
-from utils import CaptchaCallbackData
 
-from database.managers import UserManager, GroupManager
+from database.captcha_logs import CaptchaLogs, CaptchaStatus
+from database.managers import (
+    CaptchaLogsManager,
+    UserManager,
+    GroupManager,
+)
 from filters.is_captcha_enabled import IsCaptchaEnabled
 from keyboards.group_keyboards import captcha_keyboard
 from routers import group_messages
 
 
 CAPTCHA_TIMEOUT = 30
-pending_captcha: dict[tuple[int, int], asyncio.Task] = {}
 
 
+# =========================================================
+# CALLBACK DATA
+# =========================================================
+class CaptchaCallbackData(CallbackData, prefix="captcha"):
+    chat_id: int
+    telegram_user_id: int
+
+
+# =========================================================
+# STATE MODEL
+# =========================================================
+@dataclass
+class CaptchaState:
+    task: asyncio.Task | None
+    user_message_id: int | None
+    captcha_message_id: int | None
+    lock: asyncio.Lock
+
+
+# (chat_id, user_id) -> CaptchaState
+active_captcha: dict[tuple[int, int], CaptchaState] = {}
+
+
+# =========================================================
+# CLEANUP (как в старом коде)
+# =========================================================
+async def cleanup_captcha(bot, chat_id: int, user_id: int):
+    key = (chat_id, user_id)
+
+    state = active_captcha.pop(key, None)
+    if not state:
+        return
+
+    if state.task and not state.task.done():
+        state.task.cancel()
+
+
+# =========================================================
+# HANDLERS
+# =========================================================
 @group_messages.edited_message()
 async def handle_group_edited_message(message: Message):
     pass
 
 
-@group_messages.message(
-    ~IsCaptchaEnabled(),
-)
+@group_messages.message(~IsCaptchaEnabled())
 async def handle_group_message(message: Message):
-    print("captcha_log", 'тут')
     pass
 
 
+# =========================================================
+# SEND CAPTCHA
+# =========================================================
 @group_messages.message(IsCaptchaEnabled())
 async def captcha_send(message: Message, session: AsyncSession):
 
@@ -38,73 +79,103 @@ async def captcha_send(message: Message, session: AsyncSession):
     user_id = message.from_user.id
     key = (chat_id, user_id)
 
-    if key in pending_captcha:
-        await message.delete()
-        return
+    if key not in active_captcha:
+        active_captcha[key] = CaptchaState(
+            task=None,
+            user_message_id=None,
+            captcha_message_id=None,
+            lock=asyncio.Lock(),
+        )
 
-    user_message_id = message.message_id
+    state = active_captcha[key]
 
-    captcha_msg = await message.answer(
-        "👋 Подтвердите, что вы не бот\n"
-        "⏳ У вас 30 секунд",
-        reply_markup=captcha_keyboard(chat_id, user_id),
-        reply_to_message_id=user_message_id,
-    )
+    async with state.lock:
 
-    async def timeout():
-        await asyncio.sleep(CAPTCHA_TIMEOUT)
+        if state.task:
+            await message.delete()
+            return
 
-        if key in pending_captcha:
-            pending_captcha.pop(key, None)
+        user_message_id = message.message_id
 
-            # удаляем сообщение бота
+        captcha_msg = await message.answer(
+            "👋 Подтвердите, что вы не бот\n"
+            "⏳ У вас 30 секунд",
+            reply_markup=captcha_keyboard(chat_id, user_id),
+            reply_to_message_id=user_message_id,
+        )
+
+        captcha_message_id = captcha_msg.message_id
+        bot = message.bot   # snapshot
+
+        # ⭐ ВАЖНО — timeout удаляет напрямую (как старый код)
+        async def timeout():
             try:
-                await captcha_msg.delete()
-            except Exception:
+                await asyncio.sleep(CAPTCHA_TIMEOUT)
+
+                active_captcha.pop(key, None)
+
+                try:
+                    await bot.delete_message(chat_id, captcha_message_id)
+                except Exception:
+                    pass
+
+                try:
+                    await bot.delete_message(chat_id, user_message_id)
+                except Exception:
+                    pass
+
+            except asyncio.CancelledError:
                 pass
 
-            # удаляем сообщение пользователя
-            try:
-                await message.bot.delete_message(chat_id, user_message_id)
-            except Exception:
-                pass
+        task = asyncio.create_task(timeout())
 
-    task = asyncio.create_task(timeout())
-    pending_captcha[key] = task
+        state.task = task
+        state.user_message_id = user_message_id
+        state.captcha_message_id = captcha_message_id
 
 
+# =========================================================
+# CONFIRM CAPTCHA
+# =========================================================
 @group_messages.callback_query(CaptchaCallbackData.filter())
 async def captcha_confirm(
     callback: CallbackQuery,
     callback_data: CaptchaCallbackData,
     session: AsyncSession,
 ):
-
     if callback.from_user.id != callback_data.telegram_user_id:
         await callback.answer("❌ Это не для вас", show_alert=True)
         return
 
-    key = (callback_data.chat_id, callback_data.telegram_user_id)
+    chat_id = callback_data.chat_id
+    user_id = callback_data.telegram_user_id
+    key = (chat_id, user_id)
 
-    task = pending_captcha.pop(key, None)
-    if task:
-        task.cancel()
+    # ✅ получаем state ДО cleanup
+    state = active_captcha.get(key)
 
-    await callback.message.delete()
+    # ✅ удаляем ТОЛЬКО сообщение капчи
+    if state and state.captcha_message_id:
+        try:
+            await callback.bot.delete_message(chat_id, state.captcha_message_id)
+        except Exception:
+            pass
+
+    # ✅ теперь чистим timeout / state
+    await cleanup_captcha(callback.bot, chat_id, user_id)
 
     user = await UserManager(session).get(
-        telegram_user_id=callback_data.telegram_user_id,
+        telegram_user_id=user_id,
     )
 
     group = await GroupManager(session).get(
-        chat_id=callback_data.chat_id,
+        chat_id=chat_id,
     )
 
-    if not user:
-        await callback.answer("❌ Пользователь не найден")
+    if not user or not group:
+        await callback.answer("❌ Ошибка данных")
         return
 
-    # создаём лог прохождения
     await CaptchaLogsManager(session).create(
         CaptchaLogs(
             group_id=group.id,
@@ -116,3 +187,4 @@ async def captcha_confirm(
     await session.commit()
 
     await callback.answer("✅ Теперь можно писать")
+

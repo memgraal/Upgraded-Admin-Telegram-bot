@@ -56,7 +56,7 @@ class BanwordsMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         if event.chat.type == ChatType.CHANNEL or event.sender_chat is not None:
-            print("BanwordsMiddleware: канал или отправлено от имени чата, пропускаем")
+            print("BanwordsMiddleware: канал сделал пост или коммент от имени канала, пропускаем")
             return
 
         session = data.get("session")
@@ -67,7 +67,7 @@ class BanwordsMiddleware(BaseMiddleware):
         group = await GroupManager(session).get(chat_id=event.chat.id)
         if not group or group.subscription_type != GroupType.PAID:
             print("BanwordsMiddleware: группа не подписанна, пропускаем")
-            return await handler(event, data)
+            return
 
         group_settings = await GroupSettingsManager(session).get(
             group_id=group.id,

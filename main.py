@@ -27,9 +27,13 @@ async def start():
         await conn.run_sync(database.base.Base.metadata.create_all)
 
     dp.update.middleware(DbSessionMiddleware(session_pool=session_maker))
+
+    group_messages.message.middleware(SyncUsersMiddleware())
+    group_messages.edited_message.middleware(SyncUsersMiddleware())
+
     group_messages.message.middleware(BanwordsMiddleware())
     group_messages.edited_message.middleware(BanwordsMiddleware())
-    group_messages.message.middleware(SyncUsersMiddleware())
+
 
     dp.include_routers(
         dm_router,
