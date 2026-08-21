@@ -24,25 +24,22 @@ CAPTCHA_TIMEOUT = 30
 # =========================================================
 
 def generate_captcha() -> tuple[str, int]:
-    operation = random.choice(["+", "-", "*"])
+
+    operation = random.choice(["+", "-"])
 
     if operation == "+":
-        first = random.randint(1, 20)
-        second = random.randint(1, 20)
+
+        first = random.randint(1, 10)
+        second = random.randint(1, 10)
 
         answer = first + second
 
     elif operation == "-":
-        first = random.randint(1, 20)
+
+        first = random.randint(1, 10)
         second = random.randint(1, first)
 
         answer = first - second
-
-    else:
-        first = random.randint(1, 10)
-        second = random.randint(1, 10)
-
-        answer = first * second
 
     question = f"{first} {operation} {second} = ?"
 
@@ -55,9 +52,15 @@ def generate_captcha() -> tuple[str, int]:
 
 @dataclass
 class CaptchaState:
+
     task: asyncio.Task | None
+
+    user_message_id: int | None
+
     captcha_message_id: int | None
+
     answer: int
+
     lock: asyncio.Lock
 
 
@@ -120,6 +123,7 @@ async def captcha_handler(
 
     key = (chat_id, user_id)
 
+
     # =====================================================
     # У ПОЛЬЗОВАТЕЛЯ УЖЕ ЕСТЬ КАПЧА
     # =====================================================
@@ -132,11 +136,16 @@ async def captcha_handler(
 
             user_answer = (message.text or "").strip()
 
-            # Удаляем сообщение пользователя в любом случае
+
+            # -------------------------------------------------
+            # Удаляем ответ пользователя
+            # -------------------------------------------------
+
             try:
                 await message.delete()
             except Exception:
                 pass
+
 
             # -------------------------------------------------
             # Пытаемся преобразовать ответ в число
@@ -144,8 +153,11 @@ async def captcha_handler(
 
             try:
                 answer = int(user_answer)
+
             except (ValueError, TypeError):
+
                 answer = None
+
 
             # -------------------------------------------------
             # Неправильный ответ
@@ -154,17 +166,40 @@ async def captcha_handler(
             if answer != state.answer:
                 return
 
+
             # =================================================
             # CAPTCHA SOLVED
             # =================================================
 
+            user_message_id = state.user_message_id
             captcha_message_id = state.captcha_message_id
 
+
+            # -------------------------------------------------
             # Удаляем state и останавливаем timeout
+            # -------------------------------------------------
+
             await cleanup_captcha(
                 chat_id,
                 user_id,
             )
+
+
+            # -------------------------------------------------
+            # Удаляем исходное сообщение пользователя
+            # -------------------------------------------------
+
+            if user_message_id:
+
+                try:
+                    await message.bot.delete_message(
+                        chat_id,
+                        user_message_id,
+                    )
+
+                except Exception:
+                    pass
+
 
             # -------------------------------------------------
             # Удаляем сообщение с капчей
@@ -177,8 +212,10 @@ async def captcha_handler(
                         chat_id,
                         captcha_message_id,
                     )
+
                 except Exception:
                     pass
+
 
             # =================================================
             # DATABASE
@@ -192,8 +229,10 @@ async def captcha_handler(
                 chat_id=chat_id,
             )
 
+
             if not user or not group:
                 return
+
 
             await CaptchaLogsManager(session).create(
                 CaptchaLogs(
@@ -203,25 +242,22 @@ async def captcha_handler(
                 )
             )
 
+
             await session.commit()
 
         return
+
 
     # =====================================================
     # ПЕРВОЕ СООБЩЕНИЕ -> СОЗДАЁМ КАПЧУ
     # =====================================================
 
-    # Удаляем первое сообщение пользователя
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    # -----------------------------------------------------
-    # Генерируем пример
-    # -----------------------------------------------------
-
     question, answer = generate_captcha()
+
+
+    # -----------------------------------------------------
+    # Отправляем капчу reply на сообщение пользователя
+    # -----------------------------------------------------
 
     captcha_message = await message.answer(
         "👋 Подтвердите, что вы не бот\n\n"
@@ -229,9 +265,14 @@ async def captcha_handler(
         f"<b>{question}</b>\n\n"
         f"⏳ У вас {CAPTCHA_TIMEOUT} секунд",
         parse_mode="HTML",
+        reply_to_message_id=message.message_id,
     )
 
+
     captcha_message_id = captcha_message.message_id
+
+    user_message_id = message.message_id
+
 
     # =====================================================
     # TIMEOUT
@@ -240,36 +281,70 @@ async def captcha_handler(
     async def timeout():
 
         try:
+
             await asyncio.sleep(CAPTCHA_TIMEOUT)
+
 
             state = active_captcha.get(key)
 
             if not state:
                 return
 
+
             active_captcha.pop(key, None)
 
-            # Удаляем сообщение с капчей
+
+            # -------------------------------------------------
+            # Удаляем исходное сообщение пользователя
+            # -------------------------------------------------
+
             try:
+
+                await message.bot.delete_message(
+                    chat_id,
+                    user_message_id,
+                )
+
+            except Exception:
+                pass
+
+
+            # -------------------------------------------------
+            # Удаляем сообщение с капчей
+            # -------------------------------------------------
+
+            try:
+
                 await message.bot.delete_message(
                     chat_id,
                     captcha_message_id,
                 )
+
             except Exception:
                 pass
 
+
         except asyncio.CancelledError:
+
             pass
 
+
     task = asyncio.create_task(timeout())
+
 
     # =====================================================
     # SAVE STATE
     # =====================================================
 
     active_captcha[key] = CaptchaState(
+
         task=task,
+
+        user_message_id=user_message_id,
+
         captcha_message_id=captcha_message_id,
+
         answer=answer,
+
         lock=asyncio.Lock(),
     )
